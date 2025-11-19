@@ -1,14 +1,56 @@
+# ======================================
+# MODULE IMPORTS
+# ======================================
+
+# time:
+#   Used for handling delays or timing operations.
 import time
+
+# webbrowser:
+#   Allows automatically opening the default web browser
+#   when the server starts.
 import webbrowser
+
+# Flask and utilities:
+#   Flask ............ Minimal web framework used to create the server.
+#   request .......... Reads incoming HTTP request data.
+#   jsonify .......... Converts Python objects into JSON for API responses.
+#   make_response .... Creates custom HTTP responses (e.g., sending HTML).
 from flask import Flask, request, jsonify, make_response
+
+# threading:
+#   Enables running background tasks such as opening the browser
+#   while the server starts simultaneously.
 import threading
+
+# unicodedata:
+#   Used to normalize and clean text (remove accents, unify characters)
+#   for accurate text processing in the chatbot.
 import unicodedata
+
+# difflib:
+#   Provides text similarity algorithms, used to compare user input
+#   with known keywords.
 import difflib
 
+# ======================================
+# FLASK APPLICATION INITIALIZATION
+# ======================================
+
+# Create a Flask application instance.
+# static_folder="static" tells Flask where to look for static files
+# such as CSS, JavaScript, and images used by the web interface.
 app = Flask(__name__, static_folder="static")
 
-# DICCIONARIO DE RESPUESTAS
 
+# ===============================
+# DICTIONARY OF RESPONSES
+# ===============================
+# This dictionary contains all possible responses the bot can give,
+# organized into categories (saludos, contacto, estudios, etc.).
+# Each key represents a topic, and each value is either:
+# - another dictionary with subtopics, or
+# - a single string response.
 respuestas_cooltist = {
     #SALUDOS Y AGRADECIMIENTOS
     "saludos": {
@@ -179,7 +221,11 @@ respuestas_cooltist = {
     },
 }
 
-
+# ===============================
+# KEYWORD DICTIONARY
+# ===============================
+# This dictionary maps each topic to a list of keywords that help
+# determine what the user is asking about.
 palabras_clave = {
     # SALUDOS Y AGRADECIMIENTOS
     "saludos": ["hola", "buenas", "buenos días", "qué tal", "saludos", "hey", "hi", "hello"],
@@ -252,15 +298,16 @@ palabras_clave = {
     "evaluacion": ["evaluación", "calificaciones", "notas", "seguimiento", "informes", "tutorías", "informes personalizados"],
 }
 
+# ===============================
+# STOPWORDS
+# ===============================
+# List of common Spanish words that don't provide useful meaning.
+STOPWORDS = {"el", "la", "los", "las", "de", "del", "y", "a", "un", "una", "que", "en", "al", "por", "para", "con", "sobre", "es"}
 
-
-
-# FUNCIONES DE COINCIDENCIA
-
-# Palabras comunes que no aportan información relevante
-STOPWORDS = {"el", "la", "los", "las", "de", "del", "y", "a", "un", "una", "que", "en", "al", "por", "para", "con", "sobre","es"}
-
-# Palabras que indican intención o contexto
+# ===============================
+# CONTEXTUAL RELEVANT WORDS
+# ===============================
+# Groups of context-specific words to reinforce detection accuracy.
 PALABRAS_RELEVANTES = {
     "direccion": ["donde", "ubicacion", "localizacion", "encontrar", "mapa", "sitio", "lugar", "esta"],
     "horario": ["horario", "hora", "apertura", "cierre", "mañana", "tarde"],
@@ -268,41 +315,60 @@ PALABRAS_RELEVANTES = {
     "estudios": ["estudiar", "ofrecen", "opciones", "formacion", "materias", "bachillerato", "ciclo", "smx", "asix","que puedo estudiar","que se estudia","que se puede estudiar"]
 }
 
-
-# Limpieza de texto
+# ===============================
+# TEXT CLEANING FUNCTION
+# ===============================
 def limpiar_texto(texto):
-    #Normaliza tildes, mayúsculas y elimina stopwords.
+    """Normalize text by removing accents, lowercase conversion,
+    and removing stopwords for cleaner comparison."""
+
     if not isinstance(texto, str):
         return ""
-    texto = ''.join(c for c in unicodedata.normalize('NFD', texto)
-                    if unicodedata.category(c) != 'Mn').lower()
+    
+    # Remove accents and convert to lowercase
+    texto = ''.join(
+        c for c in unicodedata.normalize('NFD', texto)
+        if unicodedata.category(c) != 'Mn'
+    ).lower()
+
+    # Remove stopwords
     palabras = [p for p in texto.split() if p not in STOPWORDS]
     return " ".join(palabras).strip()
 
 
+# ===============================
+# TEXT SIMILARITY FUNCTION
+# ===============================
 def similitud(texto1, texto2):
-   #Calcula el grado de similitud entre dos textos.
+    """Return similarity ratio between two strings using SequenceMatcher."""
     return difflib.SequenceMatcher(None, texto1, texto2).ratio()
 
 
+# ===============================
+# TOPIC DETECTION FUNCTION
+# ===============================
 def detectar_tema(texto_usuario):
-    #Detecta el tema más probable según las palabras clave y contexto.
+    """Analyze user text and determine the most likely topic
+    using keyword matching, similarity scoring, and contextual rules."""
+
     texto_usuario = limpiar_texto(texto_usuario)
     palabras_usuario = texto_usuario.split()
+
     coincidencias = {}
 
+    # Loop through all keywords to calculate score for each topic
     for tema, lista_palabras in palabras_clave.items():
         puntuacion = 0
 
         for palabra in lista_palabras:
             palabra_limpia = limpiar_texto(palabra)
 
-            # Coincidencia directa
+            # Direct match
             if palabra_limpia in texto_usuario:
                 puntuacion += 3
                 continue
 
-            # Coincidencia parcial o por similitud
+            # Similarity-based match
             for palabra_usuario in palabras_usuario:
                 if len(palabra_usuario) < 3:
                     continue
@@ -310,23 +376,24 @@ def detectar_tema(texto_usuario):
                     puntuacion += 1
                     break
 
-        # Refuerzo contextual
+        # Context reinforcement
         if tema == "direccion" and any(p in texto_usuario for p in PALABRAS_RELEVANTES["direccion"]):
             puntuacion += 3
+
         if tema in ["instituto", "quienes somos"] and any(p in texto_usuario for p in PALABRAS_RELEVANTES["direccion"]):
             puntuacion -= 2
 
         if puntuacion > 0:
             coincidencias[tema] = puntuacion
 
-    # Elegir tema con más puntuación
+    # Select topic with highest score
     if coincidencias:
         max_puntos = max(coincidencias.values())
         temas_posibles = [t for t, v in coincidencias.items() if v == max_puntos]
         temas_posibles.sort(key=len, reverse=True)
         return temas_posibles[0]
 
-    # Fallback por coincidencia directa
+    # Fallback: keyword directly matches dictionary category
     for tema in respuestas_cooltist.keys():
         if tema != "default" and any(pal in texto_usuario for pal in tema.split()):
             return tema
@@ -334,27 +401,86 @@ def detectar_tema(texto_usuario):
     return None
 
 
+# ===============================
+# RESPONSE LOGIC FUNCTION
+# ===============================
 def responder_cooltist(texto_usuario):
-    #Devuelve la respuesta correspondiente al texto del usuario.
+    """Return the most appropriate response based on the detected topic."""
+
     tema = detectar_tema(texto_usuario)
 
-    # Buscar el subtema más específico dentro del diccionario principal
+    # Look for a specific subtopic in the main dictionary
     if tema:
         for categoria, subtemas in respuestas_cooltist.items():
+
+            # If the topic exists as a subkey
             if tema in subtemas:
                 return subtemas[tema]
-        # Si el tema es una categoría general (p.ej. "saludos")
+
+        # If topic itself is a category
         if tema in respuestas_cooltist:
             subtemas = respuestas_cooltist[tema]
             if isinstance(subtemas, dict):
+                # Return the first response in the dictionary
                 return next(iter(subtemas.values()))
             return subtemas
 
-    # Si no se encuentra ningún tema
+    # Default response if nothing matches
     return respuestas_cooltist["default"]["default"]
 
 
-# HTML CON RUTAS CORRECTAS A STATIC
+# ===============================
+# FLASK MAIN PAGE ROUTE
+# ===============================
+@app.route("/")
+def index():
+    """Serve the main HTML webpage."""
+    return make_response(HTML)
+
+# CHATBOT (HTML + SCRIPT) EXPLANATION:
+# This HTML block contains the full structure and behavior of the floating chatbot "Cooltist".
+# It includes two main components:
+#
+# 1) CHATBOX INTERFACE (HTML + CSS):
+#    - A floating chat window (`.chat-box`) that can be minimized and restored.
+#    - A header showing the bot name and a minimize button.
+#    - A message area where user and bot messages appear.
+#    - An input area with a text field and a send button.
+#    - A floating circular icon (`.chat-icon`) that appears when the chat is minimized.
+#      Clicking it reopens the chat window.
+#
+#    The CSS styles define:
+#       • Chatbox layout, colors, shadows, responsiveness.
+#       • Message bubble appearance for both user and bot.
+#       • Floating icon animation and button behavior.
+#
+# 2) CHATBOT SCRIPT (JavaScript):
+#    Controls the chatbot's logic and interaction:
+#
+#    - appendMessage(text, who):
+#         Creates and displays a new message bubble.
+#         Adds avatar icons and scrolls the chat automatically.
+#
+#    - sendMessage():
+#         Triggered when user presses ENTER or clicks "Enviar".
+#         Steps:
+#           a) Reads user text and displays it immediately.
+#           b) Sends the text to the Flask backend using fetch('/api/chat').
+#           c) Shows a temporary “Escribiendo...” message while waiting.
+#           d) Receives JSON response:  { reply: "..." }.
+#           e) Replaces the temporary text with the bot’s actual response.
+#
+#    - Initial welcome message:
+#         When the page loads, the bot sends a greeting automatically.
+#
+#    - Chat minimize/restore system:
+#         • Clicking the header button hides the chat and shows the round icon.
+#         • Clicking the round icon reopens the chat window.
+#
+# In summary:
+# The HTML handles the visual interface, the JavaScript handles message flow,
+# and the Flask server (Python) provides the actual reply logic for Cooltist.
+
 HTML = """<!DOCTYPE html>
 <html lang="es">
 <head>
@@ -819,35 +945,40 @@ HTML = """<!DOCTYPE html>
 </html>
 """
 
-
-#servidor flask
-@app.route("/")
-def index():
-    return make_response(HTML)
-
-
+# ===============================
+# FLASK CHAT API ROUTE
+# ===============================
 @app.route("/api/chat", methods=["POST"])
 def chat():
+    """Receive user message via POST, process it,
+    and return a JSON response with the chatbot reply."""
+    
     data = request.get_json(silent=True) or {}
     user_message = data.get("message", "").strip()
+
     if not user_message:
         return jsonify({"reply": "Por favor, escribe algo para que pueda responderte."})
+
     reply = responder_cooltist(user_message)
     return jsonify({"reply": reply})
 
 
+# ===============================
+# SERVER LAUNCHER
+# ===============================
 def run_server():
+    """Start Flask web server on port 5000."""
     app.run(host="0.0.0.0", port=5000, debug=False)
 
 
+# ===============================
+# MAIN EXECUTION BLOCK
+# ===============================
 if __name__ == "__main__":
+    # Automatically open browser after 1.2 seconds
     threading.Timer(1.2, lambda: webbrowser.open("http://127.0.0.1:5000")).start()
+
     print("Servidor iniciado en http://127.0.0.1:5000")
     print("Presiona Ctrl+C para detener.")
+    
     run_server()
-
-#✅ Paso 2: permitir tráfico de entrada
-#netsh advfirewall firewall add rule name="Flask Inbound 5000" dir=in action=allow protocol=TCP localport=5000
-
-#✅ Paso 3: permitir tráfico de salida (opcional, pero recomendable)
-#netsh advfirewall firewall add rule name="Flask Outbound 5000" dir=out action=allow protocol=TCP l
